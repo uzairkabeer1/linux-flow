@@ -1,0 +1,11 @@
+# Rust
+/target/
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+# local secrets / sessions (never commit)
+wispr_session.json
+*.env
