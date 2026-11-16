@@ -1,0 +1,27 @@
+[package]
+name = "linux-flow"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Hold-to-talk voice dictation for Linux (X11 + Wayland) using your Wispr Flow account"
+repository = "https://github.com/uzairkabeer1/linux-flow"
+readme = "README.md"
+keywords = ["dictation", "speech-to-text", "wayland", "wispr", "voice"]
+categories = ["command-line-utilities", "accessibility"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+evdev = "0.12"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
