@@ -84,10 +84,15 @@ fn real_main() -> Result<i32> {
         }
         "setup" => setup::run(&hotkeys(&cfg()?)?)?,
         "status" => status(&cfg()?)?,
-        "stop" => match instance::stop() {
-            Some(pid) => println!("Stopped linux-flow (pid {pid})."),
-            None => println!("linux-flow is not running."),
-        },
+        "stop" => {
+            let pids = instance::stop();
+            if pids.is_empty() {
+                println!("linux-flow is not running.");
+            } else {
+                let list: Vec<String> = pids.iter().map(|p| p.to_string()).collect();
+                println!("Stopped linux-flow (pid {}).", list.join(", "));
+            }
+        }
         "keys" => hotkey::watch_keys()?,
         "test-mic" => test_mic(&cfg()?, &mut args)?,
         "transcribe" => {
@@ -118,7 +123,20 @@ fn status(cfg: &config::Config) -> Result<()> {
     let injector = inject::Injector { method: cfg.output.method.clone(), restore_clipboard: true };
     let st = inject::session_type();
     println!("linux-flow {}", env!("CARGO_PKG_VERSION"));
-    println!("running:   {}", instance::running_pid().map(|p| format!("yes (pid {p})")).unwrap_or("no".into()));
+    let mut daemons = instance::other_daemons();
+    if let Some(p) = instance::running_pid().filter(|p| !daemons.iter().any(|d| d.0 == *p)) {
+        daemons.push((p, "linux-flow run".into()));
+    }
+    match daemons.len() {
+        0 => println!("running:   no"),
+        1 => println!("running:   yes (pid {})", daemons[0].0),
+        n => {
+            println!("running:   {n} COPIES - each dictation will be typed {n} times! Fix: linux-flow stop");
+            for (p, c) in &daemons {
+                println!("             pid {p}: {c}");
+            }
+        }
+    }
     println!("config:    {}", config::default_path().display());
     println!("session:   {st} ({})", if inject::desktop().is_empty() { "unknown desktop".into() } else { inject::desktop() });
     println!("output:    {}", injector.resolve_method());

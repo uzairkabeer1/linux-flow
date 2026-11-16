@@ -91,6 +91,9 @@ mkdir -p "$BIN_DIR"
 rm -f "$BIN_DIR/$APP"                       # may be the old Python symlink
 install -m 755 "$TMP/$APP" "$BIN_DIR/$APP"
 rm -rf "$DATA_DIR/venv" "$DATA_DIR/src"     # old Python version, if any
+# The new binary finds every running copy (any version, any path) and stops it, so
+# exactly one instance runs afterwards: two copies would type each dictation twice.
+if "$BIN_DIR/$APP" stop 2>/dev/null | grep -q Stopped; then WAS_RUNNING=1; fi
 say "Installed $("$BIN_DIR/$APP" --version) to $BIN_DIR/$APP"
 
 # ---------------------------------------------------------- system packages

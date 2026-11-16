@@ -71,18 +71,67 @@ fn acquire_at(p: &Path) -> Result<File> {
     Ok(f)
 }
 
-/// SIGTERM the running instance and wait for it to exit. Returns its pid if one was running.
-pub fn stop() -> Option<i32> {
-    let pid = running_pid().filter(|&p| p > 0)?;
-    // SAFETY: sending a signal.
-    unsafe { libc::kill(pid, libc::SIGTERM) };
+/// Is this command line a dictation daemon (any linux-flow version, Rust or the old Python)?
+pub fn is_daemon_cmdline(args: &[String]) -> bool {
+    let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
+    let Some(i) = args.iter().position(|a| base(a) == "linux-flow" || a == "linux_flow") else {
+        return false;
+    };
+    // `linux-flow` alone or `linux-flow [--config X] run`
+    let rest: Vec<&str> = args[i + 1..].iter().map(String::as_str).filter(|a| !a.is_empty()).collect();
+    match rest.as_slice() {
+        [] => true,
+        ["--config", _, tail @ ..] => tail.is_empty() || tail[0] == "run",
+        [first, ..] => *first == "run",
+    }
+}
+
+/// Other dictation daemons running as this user, found via /proc. This catches copies the
+/// lock can't see, such as the old Python version, which would type every transcript again.
+pub fn other_daemons() -> Vec<(i32, String)> {
+    let me = std::process::id() as i32;
+    // SAFETY: getuid never fails.
+    let uid = unsafe { libc::getuid() };
+    let mut out = vec![];
+    let Ok(dir) = std::fs::read_dir("/proc") else { return out };
+    for e in dir.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else { continue };
+        if pid == me {
+            continue;
+        }
+        use std::os::unix::fs::MetadataExt;
+        if e.metadata().map(|m| m.uid() != uid).unwrap_or(true) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(e.path().join("cmdline")) else { continue };
+        let args: Vec<String> = raw.split(|&b| b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        if is_daemon_cmdline(&args) {
+            out.push((pid, args.join(" ").trim().to_string()));
+        }
+    }
+    out
+}
+
+/// Stop every running dictation daemon (ours via the lock, plus any strays).
+/// Returns the pids that were signalled.
+pub fn stop() -> Vec<i32> {
+    let mut pids: Vec<i32> = other_daemons().into_iter().map(|(p, _)| p).collect();
+    if let Some(p) = running_pid().filter(|&p| p > 0) {
+        if !pids.contains(&p) {
+            pids.push(p);
+        }
+    }
+    for &pid in &pids {
+        // SAFETY: sending a signal.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
     for _ in 0..30 {
-        if running_pid().is_none() {
+        if running_pid().is_none() && other_daemons().is_empty() {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Some(pid)
+    pids
 }
 
 #[cfg(test)]
@@ -101,5 +150,22 @@ mod tests {
         drop(held);
         assert_eq!(running_pid_at(&p), None);
         assert!(acquire_at(&p).is_ok());
+    }
+
+    #[test]
+    fn recognises_daemons_of_any_version() {
+        let v = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        // Rust binary, autostart and manual
+        assert!(is_daemon_cmdline(&v("/home/u/.local/bin/linux-flow run")));
+        assert!(is_daemon_cmdline(&v("linux-flow")));
+        assert!(is_daemon_cmdline(&v("linux-flow --config /x.toml run")));
+        // old Python version (venv script and -m)
+        assert!(is_daemon_cmdline(&v("/home/u/.local/share/linux-flow/venv/bin/python3 /home/u/.local/bin/linux-flow run")));
+        assert!(is_daemon_cmdline(&v("python3 -m linux_flow run")));
+        // not daemons
+        assert!(!is_daemon_cmdline(&v("linux-flow status")));
+        assert!(!is_daemon_cmdline(&v("linux-flow stop")));
+        assert!(!is_daemon_cmdline(&v("vim /home/u/linux-flow/README.md")));
+        assert!(!is_daemon_cmdline(&v("sh -c exec \"/home/u/.local/bin/linux-flow\" run >>log")));
     }
 }

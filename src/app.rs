@@ -16,6 +16,15 @@ use crate::{instance, log};
 
 pub fn run(cfg: Config) -> Result<()> {
     let _lock = instance::acquire()?; // held until exit; refuses a second copy
+    let others = instance::other_daemons();
+    if !others.is_empty() {
+        let list: Vec<String> = others.iter().map(|(p, c)| format!("  pid {p}: {c}")).collect();
+        return Err(format!(
+            "another linux-flow is already running, so every dictation would be typed twice:\n{}\n\
+             Stop it with `linux-flow stop`, then start this one again.",
+            list.join("\n")
+        ));
+    }
     let keys = cfg
         .hotkey
         .keys
@@ -26,7 +35,7 @@ pub fn run(cfg: Config) -> Result<()> {
     let wispr = Wispr::new(&cfg);
     wispr.fresh_session(false)?; // fail fast if not signed in
     let injector = Injector { method: cfg.output.method.clone(), restore_clipboard: cfg.output.restore_clipboard };
-    log!("session={} output={} hotkey={} ({})", session_type(), injector.resolve_method(), cfg.hotkey.keys.join("+"), cfg.hotkey.mode);
+    log!("linux-flow {} pid={} session={} output={} hotkey={} ({})", env!("CARGO_PKG_VERSION"), std::process::id(), session_type(), injector.resolve_method(), cfg.hotkey.keys.join("+"), cfg.hotkey.mode);
 
     let (key_tx, key_rx) = mpsc::channel();
     let n = hotkey::spawn_listeners(keys, key_tx)?;
